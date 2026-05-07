@@ -2457,6 +2457,17 @@ function aggregateWeek(memberId, weekIdx) {
 
 document.querySelectorAll(".nav-item").forEach(it => {
   it.addEventListener("click", () => {
+    // ページ切替前にローカルのstateを最新に更新（入力データが消えないように）
+    try {
+      const raw = localStorage.getItem("tracker-state");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const keep = { firebaseConfig: state.firebaseConfig, pin: state.pin };
+        if (parsed.entries) state.entries = parsed.entries;
+        if (parsed.dailyReports) state.dailyReports = parsed.dailyReports;
+        Object.assign(state, keep);
+      }
+    } catch(e) {}
     document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
     it.classList.add("active");
     const page = it.dataset.page;
