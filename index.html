@@ -3617,15 +3617,10 @@ function zenkakuToHankaku(str) {
 function updateEntry(memberId, date, field, value) {
   if (field !== "action") {
     value = zenkakuToHankaku(String(value)).trim();
-    if (value !== "" && value !== "-" && isNaN(parseFloat(value))) {
-      showToast("数値で入力してください");
-      return;
-    }
+    // type="number"はブラウザが制御するのでバリデーション不要
   }
   setEntryField(memberId, date, field, value);
   document.getElementById("autosave-indicator").textContent = "SAVING...";
-
-  // 計算列をリアルタイム更新（行全体の再描画なしで速度優先）
   updateEntryCalcRow(memberId, date);
 }
 
@@ -6941,7 +6936,7 @@ async function startFirestoreSync() {
       const payload = JSON.parse(d.payload);
       const keep = { firebaseConfig: state.firebaseConfig, pin: state.pin };
       // entriesは個別ドキュメントで管理するのでconfigには含まない
-      const keys = ["members","monthlyTarget","payrollRates","dailyReports","currentMonth","currentWeek","pin"];
+      const keys = ["members","monthlyTarget","payrollRates","dailyReports","entries","currentMonth","currentWeek","pin"];
       keys.forEach(k => { if (payload[k] !== undefined) state[k] = payload[k]; });
       Object.assign(state, keep);
       saveStateLocal();
@@ -7041,7 +7036,7 @@ async function _pushConfig() {
   try {
     const col = state.firebaseConfig.collectionName || "shared";
     const payload = {};
-    ["members","monthlyTarget","payrollRates","dailyReports","currentMonth","currentWeek","pin"].forEach(k => {
+    ["members","monthlyTarget","payrollRates","dailyReports","entries","currentMonth","currentWeek","pin"].forEach(k => {
       payload[k] = state[k];
     });
     await window._fbSetDoc(window._fbDoc(firestoreDb, col, "config"), {
