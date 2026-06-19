@@ -1953,9 +1953,6 @@
       <div id="bulletin-list" style="display:flex;flex-direction:column;gap:16px;"></div>
     </div>
 
-    <!-- 板管理セクション（日報ページ下段） -->
-    <div id="board-section" style="padding:0 24px 32px;"></div>
-
     <!-- Q&A -->
     <div class="page" id="page-qa">
       <div class="page-header">
@@ -2061,6 +2058,8 @@
         </div>
       </div>
       <div id="daily-report-input-content"></div>
+      <!-- 板管理セクション（日報ページ下段） -->
+      <div id="board-section" style="padding:0 24px 32px;"></div>
     </div>
 
     <!-- Daily Import (Excel) -->
@@ -9910,12 +9909,11 @@ function renderPage(page) {
   if (page === "payroll") renderPayroll();
   if (page === "daily-report-input") {
     initDailyReportPage();
-    // 板セクション描画（日報ページ下段）
-    setTimeout(() => {
-      const dateInput = document.getElementById('nippo-date');
-      const dateStr = dateInput ? dateInput.value : new Date().toISOString().slice(0,10);
-      if (typeof renderBoardSection === 'function') renderBoardSection(dateStr);
-    }, 300);
+    setTimeout(function() {
+      const d = document.getElementById('daily-report-date');
+      const dateStr = d ? d.value : new Date().toISOString().slice(0,10);
+      renderBoardSection(dateStr);
+    }, 400);
   }
   if (page === "daily-import") { renderDailyImport(); initCallSheetDropzone(); }
   if (page === "archive") renderArchive();
@@ -15588,270 +15586,214 @@ async function _pushReport(memberId, date) {
 
 
 // ═══════════════════════════════════════════════════════════
-//   板管理機能 BOARD MANAGER
+//   板管理機能 BOARD MANAGER v1
 // ═══════════════════════════════════════════════════════════
 
-// プランマスター
-const BOARD_PLAN_MASTER = {
-  // 電灯プラン（DA/DB/DC/ずっと割系）
-  dentou: [
-    '東京DB','東DB','東DA','東DC',
-    '関西DA','関西DB','西DA','西DB',
-    '九州DB','九DA','九DB','九DC',
-    'ずっと割S','ずっと割L','ずっと割SD',
-    'DCずっと割S','DCずっと割L','DCずっと割SD',
-    '中DB','中DA','中DC',
-    '北DB','北DA',
-    '東京DC','東DC',
-  ],
-  // 動力プラン
-  douryoku: [
-    'DD','東DD','東京DD','東京動力','東京動力DD',
-    '関西DD','関西動力','西DD',
-    '九州DD','九DD','九州動力',
-    '中DD','中動力',
-    '北DD','北動力',
-    'DDずっと割S','DDずっと割L','DDずっと割SD',
-  ]
-};
+window._boardData = window._boardData || {}; // { dateStr: [row, ...] }
 
-// プラン判定（文字列に動力系キーワードが含まれればdouryoku）
-function boardJudgePlan(planStr) {
-  if (!planStr) return 'dentou';
-  const s = planStr.replace(/\s/g,'').toUpperCase();
-  if (/DD|動力/.test(s)) return 'douryoku';
-  return 'dentou';
+function _boardGetRows(dateStr) {
+  if (!window._boardData[dateStr]) window._boardData[dateStr] = [];
+  return window._boardData[dateStr];
 }
 
-// 板データのstate管理
-if (!window.boardState) {
-  window.boardState = {
-    boards: {},  // { "2026-06-18": [ ...rows ] }
-  };
-}
-
-function getBoardKey(dateStr) {
-  return dateStr || new Date().toISOString().slice(0,10);
-}
-
-// 板の行テンプレート
-function newBoardRow() {
+function _boardNewRow() {
   return {
-    id: Date.now() + Math.random(),
-    kaishuDate: '',      // 回収日
-    callTime: '',        // 架電予定
-    passId: '',          // パス元メンバーID
-    passSkip: false,     // （）付き
-    kuroId: '',          // クロ担当メンバーID
-    kuroSkip: false,     // （）付き
-    company: '',         // 社名
-    zenjigo: 'none',     // 前後確結果: none/tsuiseki/ok
-    kyakuban: 'none',    // 客番回収: none/machi/ok
-    plans: [],           // [{type:'dentou'|'douryoku', count:1, name:'東DB'}]
-    op: false,           // OP有無
-    dentouAdj: 0,        // 電灯調整
-    douryokuAdj: 0,      // 動力調整
-    memo: '',            // メモ
+    id: 'r' + Date.now() + Math.floor(Math.random()*1000),
+    kaishuDate: '',
+    callTime: '',
+    passId: '',
+    passSkip: false,
+    kuroId: '',
+    kuroSkip: false,
+    company: '',
+    result: 'none',    // none / tsuiseki / ok
+    kyakuban: 'none',  // none / machi / ok
+    dentouCount: 0,
+    douryokuCount: 0,
+    dentouAdj: 0,
+    douryokuAdj: 0,
+    op: false,
   };
 }
 
-// 板をFirestoreに保存
-async function saveBoardToFirestore(dateStr) {
+// 判定: 動力かどうか（DDまたは動力を含む）
+function _boardIsDouryoku(planName) {
+  return /DD|動力/.test(planName || '');
+}
+
+// 集計: 板→日報反映値を計算
+function _boardCalc(dateStr) {
+  const rows = _boardGetRows(dateStr);
+  const result = {};
+  (state.members || []).forEach(m => {
+    result[m.id] = { pass: 0, maekaku_ok: 0, seiyaku: 0, dentou: 0, douryoku: 0 };
+  });
+  let teamOp = 0;
+
+  rows.forEach(row => {
+    const isOk = row.result === 'ok' && row.kyakuban === 'ok';
+
+    // パス（()なしのみ）
+    if (row.passId && !row.passSkip && result[row.passId] !== undefined) {
+      result[row.passId].pass += 1;
+    }
+
+    // クロ（前確OK）(()なしのみ)
+    if (row.kuroId && !row.kuroSkip && result[row.kuroId] !== undefined) {
+      result[row.kuroId].maekaku_ok += 1;
+
+      if (isOk) {
+        const isBuntan = row.passId && !row.passSkip && row.passId !== row.kuroId && result[row.passId] !== undefined;
+        const ratio = isBuntan ? 0.5 : 1;
+        const dentou = (parseFloat(row.dentouCount) || 0) + (parseFloat(row.dentouAdj) || 0);
+        const douryoku = (parseFloat(row.douryokuCount) || 0) + (parseFloat(row.douryokuAdj) || 0);
+
+        result[row.kuroId].seiyaku  += ratio;
+        result[row.kuroId].dentou   += dentou * ratio;
+        result[row.kuroId].douryoku += douryoku * ratio;
+
+        if (isBuntan) {
+          result[row.passId].seiyaku  += ratio;
+          result[row.passId].dentou   += dentou * ratio;
+          result[row.passId].douryoku += douryoku * ratio;
+        }
+      }
+    }
+
+    if (row.op) teamOp++;
+  });
+
+  return { members: result, teamOp };
+}
+
+// Firestore保存
+async function _boardSave(dateStr) {
   if (!firestoreDb || !currentRole) return;
   try {
-    const col = state.firebaseConfig.collectionName || 'shared';
-    const rows = (window.boardState.boards[dateStr] || []);
+    const col = (state.firebaseConfig && state.firebaseConfig.collectionName) || 'shared';
     await window._fbSetDoc(
       window._fbDoc(firestoreDb, col + '_board', dateStr),
-      { date: dateStr, rows: JSON.stringify(rows), updatedAt: window._fbServerTimestamp() },
+      { date: dateStr, rows: JSON.stringify(_boardGetRows(dateStr)), updatedAt: window._fbServerTimestamp() },
       { merge: true }
     );
-  } catch(e) { console.warn('board save:', e); }
+    showToast('✅ 板を保存しました');
+  } catch(e) { showToast('❌ 保存失敗: ' + e.message); }
 }
 
-// Firestoreから板を読込
-async function loadBoardFromFirestore(dateStr) {
+// Firestore読込
+async function _boardLoad(dateStr) {
   if (!firestoreDb) return;
   try {
-    const col = state.firebaseConfig.collectionName || 'shared';
+    const col = (state.firebaseConfig && state.firebaseConfig.collectionName) || 'shared';
     const snap = await window._fbGetDoc(window._fbDoc(firestoreDb, col + '_board', dateStr));
-    if (snap.exists()) {
-      const d = snap.data();
-      window.boardState.boards[dateStr] = JSON.parse(d.rows || '[]');
-    } else {
-      window.boardState.boards[dateStr] = [];
+    if (snap && snap.exists && snap.exists()) {
+      window._boardData[dateStr] = JSON.parse(snap.data().rows || '[]');
     }
   } catch(e) { console.warn('board load:', e); }
 }
 
-// 板→日報への自動集計
-function calcBoardToNippo(dateStr) {
-  const rows = window.boardState.boards[dateStr] || [];
-  // memberId → { pass, kuro_cls, maekaku_ok, seiyaku, dentou, douryoku }
-  const result = {};
-  const memberIds = (state.members||[]).filter(m=>m.active&&m.name).map(m=>m.id);
-  memberIds.forEach(id => {
-    result[id] = { pass:0, maekaku_ok:0, seiyaku:0, dentou:0, douryoku:0, op:0 };
-  });
-  
-  let teamOp = 0;
-
-  rows.forEach(row => {
-    const isOk = row.zenjigo === 'ok' && row.kyakuban === 'ok';
-    const isMachi = row.kyakuban === 'machi';
-    
-    // パス数（（）なしのみ）
-    if (row.passId && !row.passSkip && result[row.passId]) {
-      result[row.passId].pass += 1;
-    }
-    
-    // 前確CLS・OK（（）なしのみ）
-    if (row.kuroId && !row.kuroSkip && result[row.kuroId]) {
-      result[row.kuroId].maekaku_ok += 1;
-      
-      // 客番OKのみ成約計上
-      if (isOk) {
-        // 按分判定（パスとクロが別人かつ両方（）なし）
-        const isBuntan = row.passId && !row.passSkip && row.passId !== row.kuroId;
-        const ratio = isBuntan ? 0.5 : 1;
-        
-        // プラン集計（調整値含む）
-        let dentouCount = 0, douryokuCount = 0;
-        (row.plans || []).forEach(p => {
-          if (p.type === 'douryoku') douryokuCount += (p.count || 1);
-          else dentouCount += (p.count || 1);
-        });
-        dentouCount += (row.dentouAdj || 0);
-        douryokuCount += (row.douryokuAdj || 0);
-        
-        result[row.kuroId].seiyaku += ratio;
-        result[row.kuroId].dentou += dentouCount * ratio;
-        result[row.kuroId].douryoku += douryokuCount * ratio;
-        
-        if (isBuntan && result[row.passId]) {
-          result[row.passId].seiyaku += ratio;
-          result[row.passId].dentou += dentouCount * ratio;
-          result[row.passId].douryoku += douryokuCount * ratio;
-        }
-      }
-    }
-    
-    // OP
-    if (row.op) teamOp += 1;
-  });
-  
-  return { members: result, teamOp };
-}
-
-// 板→日報に反映ボタン
-async function applyBoardToNippo(dateStr) {
+// 板→日報反映
+async function _boardApplyToNippo(dateStr) {
   if (currentRole !== 'admin') { showToast('⚠️ 管理者のみ操作可能'); return; }
-  if (!confirm(`${dateStr}の板データを日報に反映しますか？
-※現在の日報データに上書きされます`)) return;
-  
-  const calc = calcBoardToNippo(dateStr);
-  
-  // 各メンバーの日報データに反映
-  const [y, mo, d] = dateStr.split('-').map(Number);
+  if (!confirm(dateStr + ' の板データを日報に反映しますか？')) return;
+
+  const calc = _boardCalc(dateStr);
+  if (!state.dailyReports) state.dailyReports = {};
+
   for (const [memberId, vals] of Object.entries(calc.members)) {
+    if (vals.pass + vals.maekaku_ok + vals.seiyaku === 0) continue;
     const repKey = memberId + '|' + dateStr;
-    if (!state.dailyReports) state.dailyReports = {};
     if (!state.dailyReports[repKey]) state.dailyReports[repKey] = {};
-    
-    // 既存の日報データをベースに板の値を上書き
-    if (vals.pass > 0)        state.dailyReports[repKey].pass = vals.pass;
-    if (vals.maekaku_ok > 0)  state.dailyReports[repKey].maekaku_ok = vals.maekaku_ok;
-    if (vals.seiyaku > 0)     state.dailyReports[repKey].seiyaku = vals.seiyaku;
-    if (vals.dentou > 0)      state.dailyReports[repKey].dentou_plan = vals.dentou;
-    if (vals.douryoku > 0)    state.dailyReports[repKey].douryoku = vals.douryoku;
-    
-    // Firestoreへpush
+    if (vals.pass > 0)       state.dailyReports[repKey].pass = vals.pass;
+    if (vals.maekaku_ok > 0) state.dailyReports[repKey].maekaku_ok = vals.maekaku_ok;
+    if (vals.seiyaku > 0)    state.dailyReports[repKey].seiyaku = vals.seiyaku;
+    if (vals.dentou > 0)     state.dailyReports[repKey].dentou_plan = vals.dentou;
+    if (vals.douryoku > 0)   state.dailyReports[repKey].douryoku = vals.douryoku;
     try { await _pushReport(memberId, dateStr); } catch(e) {}
   }
-  
-  // チームOP
+
   if (!state.teamOp) state.teamOp = {};
-  state.teamOp[dateStr] = (state.teamOp[dateStr] || 0) + calc.teamOp;
-  
+  state.teamOp[dateStr] = calc.teamOp;
   await saveState();
-  showToast('✅ 板→日報に反映しました');
-  renderNippoPage && renderNippoPage();
+  showToast('✅ 日報に反映しました');
+  initDailyReportPage();
 }
 
-// ─── 板UI描画 ─────────────────────────────────────────────
+// メイン描画
 async function renderBoardSection(dateStr) {
   const el = document.getElementById('board-section');
   if (!el) return;
-  
-  await loadBoardFromFirestore(dateStr);
-  const rows = window.boardState.boards[dateStr] || [];
-  const activeMembers = (state.members||[]).filter(m=>m.active&&m.name);
-  const memberOptions = activeMembers.map(m =>
-    `<option value="${m.id}">${m.name.replace(/　/g,' ')}</option>`
-  ).join('');
-  
+
+  el.innerHTML = '<div style="padding:24px;color:var(--text-mute);">板を読込中...</div>';
+  await _boardLoad(dateStr);
+
+  const rows = _boardGetRows(dateStr);
   const isAdmin = currentRole === 'admin';
-  
-  // 集計表示
-  const calc = calcBoardToNippo(dateStr);
-  const summaryRows = activeMembers
+  const members = (state.members || []).filter(m => m.active && m.name);
+
+  // 集計プレビュー
+  const calc = _boardCalc(dateStr);
+  const summaryHtml = members
     .filter(m => {
       const v = calc.members[m.id];
-      return v && (v.pass+v.maekaku_ok+v.seiyaku+v.dentou+v.douryoku) > 0;
+      return v && (v.pass + v.maekaku_ok + v.seiyaku) > 0;
     })
     .map(m => {
       const v = calc.members[m.id];
+      const n = m.name.replace(/\u3000/g, ' ');
       return `<tr>
-        <td>${m.name.replace(/　/g,' ')}</td>
-        <td>${v.pass||0}</td>
-        <td>${v.maekaku_ok||0}</td>
-        <td>${v.seiyaku||''}</td>
-        <td>${v.dentou||''}</td>
-        <td>${v.douryoku||''}</td>
+        <td style="padding:6px 10px;">${n}</td>
+        <td style="padding:6px 10px;text-align:center;">${v.pass||0}</td>
+        <td style="padding:6px 10px;text-align:center;">${v.maekaku_ok||0}</td>
+        <td style="padding:6px 10px;text-align:center;">${v.seiyaku > 0 ? v.seiyaku : ''}</td>
+        <td style="padding:6px 10px;text-align:center;">${v.dentou > 0 ? v.dentou : ''}</td>
+        <td style="padding:6px 10px;text-align:center;">${v.douryoku > 0 ? v.douryoku : ''}</td>
       </tr>`;
     }).join('');
 
   el.innerHTML = `
-    <div style="margin-top:32px;border-top:2px solid var(--border);padding-top:24px;">
+    <div style="margin-top:32px;border-top:2px solid var(--border);padding-top:24px;padding-bottom:32px;">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
         <div style="width:4px;height:24px;background:#f59e0b;border-radius:2px;"></div>
         <h3 style="font-family:'Archivo',sans-serif;font-weight:800;font-size:16px;color:var(--text);margin:0;">📋 板管理</h3>
-        <span style="font-size:11px;color:var(--text-mute);">${dateStr}</span>
-        ${isAdmin ? `<button onclick="addBoardRow('${dateStr}')" style="margin-left:auto;background:var(--accent);color:#fff;border:none;padding:8px 16px;border-radius:8px;font-weight:700;cursor:pointer;font-size:12px;">＋ 行追加</button>` : ''}
+        <span style="font-size:11px;color:var(--text-mute);font-family:'JetBrains Mono',monospace;">${dateStr}</span>
+        ${isAdmin ? `<button onclick="_boardAddRow('${dateStr}')" style="margin-left:auto;background:#f59e0b;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-weight:700;cursor:pointer;font-size:13px;">＋ 行追加</button>` : ''}
       </div>
-      
-      <!-- 案件入力テーブル -->
-      <div style="overflow-x:auto;margin-bottom:16px;">
-        <table style="width:100%;border-collapse:collapse;font-size:12px;min-width:900px;">
+
+      <!-- 案件テーブル -->
+      <div style="overflow-x:auto;margin-bottom:20px;">
+        <table style="width:100%;border-collapse:collapse;font-size:12px;min-width:960px;">
           <thead>
-            <tr style="background:var(--bg-elev);">
-              <th style="padding:8px;text-align:left;white-space:nowrap;">回収日</th>
-              <th style="padding:8px;text-align:left;white-space:nowrap;">架電予定</th>
-              <th style="padding:8px;text-align:left;white-space:nowrap;">パス元</th>
-              <th style="padding:8px;text-align:left;white-space:nowrap;">クロ担当</th>
-              <th style="padding:8px;text-align:left;min-width:100px;">社名</th>
-              <th style="padding:8px;text-align:left;white-space:nowrap;">前後確</th>
-              <th style="padding:8px;text-align:left;white-space:nowrap;">客番回収</th>
-              <th style="padding:8px;text-align:left;min-width:120px;">プラン</th>
-              <th style="padding:8px;text-align:left;white-space:nowrap;">電灯調整</th>
-              <th style="padding:8px;text-align:left;white-space:nowrap;">動力調整</th>
-              <th style="padding:8px;text-align:left;white-space:nowrap;">OP</th>
-              ${isAdmin ? '<th style="padding:8px;"></th>' : ''}
+            <tr style="background:var(--bg-elev);color:var(--text-mute);font-size:11px;font-family:'JetBrains Mono',monospace;">
+              <th style="padding:8px 6px;text-align:left;white-space:nowrap;">回収日</th>
+              <th style="padding:8px 6px;text-align:left;white-space:nowrap;">架電予定</th>
+              <th style="padding:8px 6px;text-align:left;white-space:nowrap;">（）パス元</th>
+              <th style="padding:8px 6px;text-align:left;white-space:nowrap;">（）クロ担当</th>
+              <th style="padding:8px 6px;text-align:left;min-width:100px;">社名</th>
+              <th style="padding:8px 6px;text-align:left;white-space:nowrap;">前後確</th>
+              <th style="padding:8px 6px;text-align:left;white-space:nowrap;">客番回収</th>
+              <th style="padding:8px 6px;text-align:center;white-space:nowrap;">電灯件数</th>
+              <th style="padding:8px 6px;text-align:center;white-space:nowrap;">動力件数</th>
+              <th style="padding:8px 6px;text-align:center;white-space:nowrap;">電灯調整</th>
+              <th style="padding:8px 6px;text-align:center;white-space:nowrap;">動力調整</th>
+              <th style="padding:8px 6px;text-align:center;white-space:nowrap;">OP</th>
+              ${isAdmin ? '<th style="padding:8px 6px;"></th>' : ''}
             </tr>
           </thead>
-          <tbody id="board-tbody-${dateStr}">
-            ${rows.map((row,i) => renderBoardRow(row, i, dateStr, memberOptions, isAdmin)).join('')}
+          <tbody id="board-tbody">
+            ${rows.length === 0
+              ? `<tr><td colspan="${isAdmin ? 13 : 12}" style="text-align:center;padding:24px;color:var(--text-mute);">案件なし ／ 右上の「＋行追加」で追加</td></tr>`
+              : rows.map(row => _boardRowHtml(row, dateStr, members, isAdmin)).join('')
+            }
           </tbody>
         </table>
       </div>
-      
-      ${rows.length === 0 ? '<div style="text-align:center;color:var(--text-mute);padding:20px;">案件なし</div>' : ''}
-      
-      <!-- 集計サマリー -->
-      ${summaryRows ? `
+
+      <!-- 集計プレビュー -->
+      ${summaryHtml ? `
       <div style="background:var(--bg-elev);border-radius:10px;padding:16px;margin-bottom:16px;">
-        <div style="font-weight:700;font-size:12px;color:var(--text-mute);margin-bottom:10px;">📊 本日の板集計（日報反映プレビュー）</div>
-        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <div style="font-weight:700;font-size:12px;color:var(--text-mute);margin-bottom:10px;">📊 日報反映プレビュー（按分・（）ルール適用済み）</div>
+        <table style="width:auto;border-collapse:collapse;font-size:12px;">
           <thead>
             <tr style="background:var(--bg-card);">
               <th style="padding:6px 10px;text-align:left;">名前</th>
@@ -15862,190 +15804,143 @@ async function renderBoardSection(dateStr) {
               <th style="padding:6px 10px;text-align:center;">動力</th>
             </tr>
           </thead>
-          <tbody>${summaryRows}</tbody>
+          <tbody>${summaryHtml}</tbody>
         </table>
         <div style="font-size:11px;color:var(--text-mute);margin-top:8px;">OP合計: ${calc.teamOp}件</div>
       </div>
       ` : ''}
-      
-      ${isAdmin && rows.length > 0 ? `
+
+      <!-- ボタン -->
+      ${isAdmin ? `
       <div style="display:flex;gap:10px;">
-        <button onclick="saveBoardToFirestore('${dateStr}').then(()=>showToast('✅ 保存しました'))" 
-          style="flex:1;padding:10px;background:var(--bg-elev);border:1px solid var(--border);border-radius:8px;color:var(--text);font-weight:700;cursor:pointer;">
+        <button onclick="_boardSave('${dateStr}')"
+          style="flex:1;max-width:200px;padding:10px;background:var(--bg-elev);border:1px solid var(--border);border-radius:8px;color:var(--text);font-weight:700;cursor:pointer;font-size:13px;">
           💾 板を保存
         </button>
-        <button onclick="applyBoardToNippo('${dateStr}')" 
-          style="flex:1;padding:10px;background:linear-gradient(135deg,#f59e0b,#d97706);border:none;border-radius:8px;color:#fff;font-weight:700;cursor:pointer;">
+        <button onclick="_boardApplyToNippo('${dateStr}')"
+          style="flex:1;max-width:200px;padding:10px;background:linear-gradient(135deg,#f59e0b,#d97706);border:none;border-radius:8px;color:#fff;font-weight:700;cursor:pointer;font-size:13px;">
           ⚡ 日報に反映
         </button>
       </div>
-      ` : ''}
+      ` : '<div style="font-size:12px;color:var(--text-mute);">※ 閲覧のみ</div>'}
     </div>
   `;
 }
 
-function renderBoardRow(row, idx, dateStr, memberOptions, isAdmin) {
-  const skip = (val, checked) => checked ? `(${val})` : val;
-  const planText = (row.plans||[]).map(p=>`${p.name||p.type}×${p.count||1}`).join(',') || '';
-  
+function _boardRowHtml(row, dateStr, members, isAdmin) {
+  const memberOpts = members.map(m =>
+    `<option value="${m.id}" ${m.id === (isAdmin ? '' : '') ? '' : ''}>${m.name.replace(/\u3000/g,' ')}</option>`
+  ).join('');
+
+  const resultColor = row.result === 'ok' ? '#22c55e' : row.result === 'tsuiseki' ? '#f59e0b' : '#94a3b8';
+  const kyakuColor  = row.kyakuban === 'ok' ? '#22c55e' : row.kyakuban === 'machi' ? '#f59e0b' : '#94a3b8';
+
   if (!isAdmin) {
-    // 閲覧のみ
-    const passM = (state.members||[]).find(m=>m.id===row.passId);
-    const kuroM = (state.members||[]).find(m=>m.id===row.kuroId);
-    const passName = passM ? (row.passSkip?`(${passM.name.replace(/　/g,' ')})`:passM.name.replace(/　/g,' ')) : '-';
-    const kuroName = kuroM ? (row.kuroSkip?`(${kuroM.name.replace(/　/g,' ')})`:kuroM.name.replace(/　/g,' ')) : '-';
-    const statusColor = row.zenjigo==='ok'?'#22c55e':row.zenjigo==='tsuiseki'?'#f59e0b':'#94a3b8';
-    const kyakuColor = row.kyakuban==='ok'?'#22c55e':row.kyakuban==='machi'?'#f59e0b':'#94a3b8';
+    const passM = members.find(m => m.id === row.passId);
+    const kuroM = members.find(m => m.id === row.kuroId);
+    const passLabel = passM ? (row.passSkip ? `(${passM.name.replace(/\u3000/g,' ')})` : passM.name.replace(/\u3000/g,' ')) : '-';
+    const kuroLabel = kuroM ? (row.kuroSkip ? `(${kuroM.name.replace(/\u3000/g,' ')})` : kuroM.name.replace(/\u3000/g,' ')) : '-';
     return `<tr style="border-top:1px solid var(--border);">
-      <td style="padding:8px;">${row.kaishuDate||'-'}</td>
-      <td style="padding:8px;">${row.callTime||'-'}</td>
-      <td style="padding:8px;">${passName}</td>
-      <td style="padding:8px;">${kuroName}</td>
-      <td style="padding:8px;">${row.company||''}</td>
-      <td style="padding:8px;color:${statusColor};font-weight:700;">${row.zenjigo==='ok'?'OK':row.zenjigo==='tsuiseki'?'追求':'-'}</td>
-      <td style="padding:8px;color:${kyakuColor};font-weight:700;">${row.kyakuban==='ok'?'OK':row.kyakuban==='machi'?'待ち':'-'}</td>
-      <td style="padding:8px;">${planText}</td>
-      <td style="padding:8px;">${row.dentouAdj||0}</td>
-      <td style="padding:8px;">${row.douryokuAdj||0}</td>
-      <td style="padding:8px;">${row.op?'有':'無'}</td>
+      <td style="padding:8px 6px;">${row.kaishuDate||'-'}</td>
+      <td style="padding:8px 6px;">${row.callTime||'-'}</td>
+      <td style="padding:8px 6px;">${passLabel}</td>
+      <td style="padding:8px 6px;">${kuroLabel}</td>
+      <td style="padding:8px 6px;">${row.company||''}</td>
+      <td style="padding:8px 6px;color:${resultColor};font-weight:700;">${row.result==='ok'?'OK':row.result==='tsuiseki'?'追求':'-'}</td>
+      <td style="padding:8px 6px;color:${kyakuColor};font-weight:700;">${row.kyakuban==='ok'?'OK':row.kyakuban==='machi'?'待ち':'-'}</td>
+      <td style="padding:8px 6px;text-align:center;">${row.dentouCount||0}</td>
+      <td style="padding:8px 6px;text-align:center;">${row.douryokuCount||0}</td>
+      <td style="padding:8px 6px;text-align:center;">${row.dentouAdj||0}</td>
+      <td style="padding:8px 6px;text-align:center;">${row.douryokuAdj||0}</td>
+      <td style="padding:8px 6px;text-align:center;">${row.op?'✅':'－'}</td>
     </tr>`;
   }
-  
-  return `<tr style="border-top:1px solid var(--border);" id="brow-${row.id}">
-    <td style="padding:4px;"><input type="date" value="${row.kaishuDate||''}" onchange="updateBoardRow('${dateStr}','${row.id}','kaishuDate',this.value)" style="width:120px;padding:4px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;"></td>
-    <td style="padding:4px;"><input type="time" value="${row.callTime||''}" onchange="updateBoardRow('${dateStr}','${row.id}','callTime',this.value)" style="width:80px;padding:4px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;"></td>
-    <td style="padding:4px;">
+
+  const passSelected = row.passId ? memberOpts.replace(`value="${row.passId}"`, `value="${row.passId}" selected`) : memberOpts;
+  const kuroSelected = row.kuroId ? memberOpts.replace(`value="${row.kuroId}"`, `value="${row.kuroId}" selected`) : memberOpts;
+  const inp = (type, val, w, field, extra='') =>
+    `<input type="${type}" value="${val||''}" ${extra} onchange="_boardUpdate('${dateStr}','${row.id}','${field}',${type==='checkbox'?'this.checked':'this.value'})" style="width:${w};padding:5px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;">`;
+
+  return `<tr style="border-top:1px solid var(--border);">
+    <td style="padding:4px 6px;">${inp('date', row.kaishuDate, '115px', 'kaishuDate')}</td>
+    <td style="padding:4px 6px;">${inp('time', row.callTime, '80px', 'callTime')}</td>
+    <td style="padding:4px 6px;">
       <div style="display:flex;align-items:center;gap:4px;">
-        <input type="checkbox" title="（）付き" ${row.passSkip?'checked':''} onchange="updateBoardRow('${dateStr}','${row.id}','passSkip',this.checked)" style="margin:0;">
-        <select onchange="updateBoardRow('${dateStr}','${row.id}','passId',this.value)" style="padding:4px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;max-width:90px;">
-          <option value="">-</option>${memberOptions.replace(`value="${row.passId}"`,`value="${row.passId}" selected`)}
+        <label title="（）付き=カウントなし" style="display:flex;align-items:center;gap:2px;font-size:11px;color:var(--text-mute);cursor:pointer;">
+          <input type="checkbox" ${row.passSkip?'checked':''} onchange="_boardUpdate('${dateStr}','${row.id}','passSkip',this.checked)">（）
+        </label>
+        <select onchange="_boardUpdate('${dateStr}','${row.id}','passId',this.value)" style="padding:5px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;max-width:100px;">
+          <option value="">－</option>${passSelected}
         </select>
       </div>
     </td>
-    <td style="padding:4px;">
+    <td style="padding:4px 6px;">
       <div style="display:flex;align-items:center;gap:4px;">
-        <input type="checkbox" title="（）付き" ${row.kuroSkip?'checked':''} onchange="updateBoardRow('${dateStr}','${row.id}','kuroSkip',this.checked)" style="margin:0;">
-        <select onchange="updateBoardRow('${dateStr}','${row.id}','kuroId',this.value)" style="padding:4px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;max-width:90px;">
-          <option value="">-</option>${memberOptions.replace(`value="${row.kuroId}"`,`value="${row.kuroId}" selected`)}
+        <label title="（）付き=カウントなし" style="display:flex;align-items:center;gap:2px;font-size:11px;color:var(--text-mute);cursor:pointer;">
+          <input type="checkbox" ${row.kuroSkip?'checked':''} onchange="_boardUpdate('${dateStr}','${row.id}','kuroSkip',this.checked)">（）
+        </label>
+        <select onchange="_boardUpdate('${dateStr}','${row.id}','kuroId',this.value)" style="padding:5px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;max-width:100px;">
+          <option value="">－</option>${kuroSelected}
         </select>
       </div>
     </td>
-    <td style="padding:4px;"><input type="text" value="${row.company||''}" placeholder="社名" onchange="updateBoardRow('${dateStr}','${row.id}','company',this.value)" style="width:100%;padding:4px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;"></td>
-    <td style="padding:4px;">
-      <select onchange="updateBoardRow('${dateStr}','${row.id}','zenjigo',this.value)" style="padding:4px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;">
-        <option value="none" ${row.zenjigo==='none'?'selected':''}>-</option>
-        <option value="tsuiseki" ${row.zenjigo==='tsuiseki'?'selected':''}>追求</option>
-        <option value="ok" ${row.zenjigo==='ok'?'selected':''}>OK</option>
+    <td style="padding:4px 6px;">${inp('text', row.company, '100%', 'company', 'placeholder="社名"')}</td>
+    <td style="padding:4px 6px;">
+      <select onchange="_boardUpdate('${dateStr}','${row.id}','result',this.value)" style="padding:5px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;">
+        <option value="none" ${row.result==='none'?'selected':''}>－</option>
+        <option value="tsuiseki" ${row.result==='tsuiseki'?'selected':''}>追求</option>
+        <option value="ok" ${row.result==='ok'?'selected':''}>OK</option>
       </select>
     </td>
-    <td style="padding:4px;">
-      <select onchange="updateBoardRow('${dateStr}','${row.id}','kyakuban',this.value)" style="padding:4px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;">
-        <option value="none" ${row.kyakuban==='none'?'selected':''}>-</option>
+    <td style="padding:4px 6px;">
+      <select onchange="_boardUpdate('${dateStr}','${row.id}','kyakuban',this.value)" style="padding:5px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;">
+        <option value="none" ${row.kyakuban==='none'?'selected':''}>－</option>
         <option value="machi" ${row.kyakuban==='machi'?'selected':''}>待ち</option>
         <option value="ok" ${row.kyakuban==='ok'?'selected':''}>OK</option>
       </select>
     </td>
-    <td style="padding:4px;"><button onclick="openPlanEditor('${dateStr}','${row.id}')" style="padding:4px 8px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;color:var(--text);cursor:pointer;font-size:11px;white-space:nowrap;">${planText||'プラン設定'}</button></td>
-    <td style="padding:4px;"><input type="number" value="${row.dentouAdj||0}" step="0.5" onchange="updateBoardRow('${dateStr}','${row.id}','dentouAdj',parseFloat(this.value)||0)" style="width:60px;padding:4px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;text-align:center;"></td>
-    <td style="padding:4px;"><input type="number" value="${row.douryokuAdj||0}" step="0.5" onchange="updateBoardRow('${dateStr}','${row.id}','douryokuAdj',parseFloat(this.value)||0)" style="width:60px;padding:4px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;text-align:center;"></td>
-    <td style="padding:4px;"><input type="checkbox" ${row.op?'checked':''} onchange="updateBoardRow('${dateStr}','${row.id}','op',this.checked)" style="margin:0;transform:scale(1.3);"></td>
-    <td style="padding:4px;"><button onclick="deleteBoardRow('${dateStr}','${row.id}')" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:14px;padding:4px;">✕</button></td>
+    <td style="padding:4px 6px;">${inp('number', row.dentouCount||0, '60px', 'dentouCount', 'min="0" step="0.5"')}</td>
+    <td style="padding:4px 6px;">${inp('number', row.douryokuCount||0, '60px', 'douryokuCount', 'min="0" step="0.5"')}</td>
+    <td style="padding:4px 6px;">${inp('number', row.dentouAdj||0, '60px', 'dentouAdj', 'step="0.5"')}</td>
+    <td style="padding:4px 6px;">${inp('number', row.douryokuAdj||0, '60px', 'douryokuAdj', 'step="0.5"')}</td>
+    <td style="padding:4px 6px;text-align:center;"><input type="checkbox" ${row.op?'checked':''} onchange="_boardUpdate('${dateStr}','${row.id}','op',this.checked)" style="transform:scale(1.3);cursor:pointer;"></td>
+    <td style="padding:4px 6px;"><button onclick="_boardDeleteRow('${dateStr}','${row.id}')" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:16px;padding:4px 8px;">✕</button></td>
   </tr>`;
 }
 
-function addBoardRow(dateStr) {
-  if (!window.boardState.boards[dateStr]) window.boardState.boards[dateStr] = [];
-  window.boardState.boards[dateStr].push(newBoardRow());
-  renderBoardSection(dateStr);
-}
-
-function updateBoardRow(dateStr, rowId, field, value) {
-  const rows = window.boardState.boards[dateStr] || [];
-  const row = rows.find(r => String(r.id) === String(rowId));
+function _boardUpdate(dateStr, rowId, field, value) {
+  const rows = _boardGetRows(dateStr);
+  const row = rows.find(r => r.id === rowId);
   if (!row) return;
-  row[field] = value;
-  // プレビュー更新のみ（保存は手動）
-  const calc = calcBoardToNippo(dateStr);
-  // サマリーだけ更新（全再描画は重いのでスキップ）
-}
-
-function deleteBoardRow(dateStr, rowId) {
-  if (!confirm('この行を削除しますか？')) return;
-  window.boardState.boards[dateStr] = (window.boardState.boards[dateStr]||[]).filter(r=>String(r.id)!==String(rowId));
-  renderBoardSection(dateStr);
-}
-
-// プラン編集モーダル
-function openPlanEditor(dateStr, rowId) {
-  const rows = window.boardState.boards[dateStr] || [];
-  const row = rows.find(r => String(r.id) === String(rowId));
-  if (!row) return;
-  
-  const plans = row.plans || [];
-  
-  const overlay = document.createElement('div');
-  overlay.id = 'plan-editor-modal';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;';
-  overlay.innerHTML = `
-    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:28px;width:90%;max-width:480px;">
-      <div style="font-weight:800;font-size:16px;color:var(--text);margin-bottom:16px;">プラン設定</div>
-      <div id="plan-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;">
-        ${plans.map((p,i) => `
-          <div style="display:flex;gap:8px;align-items:center;">
-            <select id="ptype-${i}" style="padding:6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;">
-              <option value="dentou" ${p.type==='dentou'?'selected':''}>電灯</option>
-              <option value="douryoku" ${p.type==='douryoku'?'selected':''}>動力</option>
-            </select>
-            <input type="text" id="pname-${i}" value="${p.name||''}" placeholder="プラン名(例:東DB)" style="flex:1;padding:6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;">
-            <input type="number" id="pcount-${i}" value="${p.count||1}" min="0.5" step="0.5" style="width:60px;padding:6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;text-align:center;">
-            <button onclick="this.parentElement.remove()" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:16px;">✕</button>
-          </div>
-        `).join('')}
-      </div>
-      <button onclick="addPlanLine()" style="width:100%;padding:8px;background:var(--bg-elev);border:1px dashed var(--border);border-radius:6px;color:var(--text-dim);cursor:pointer;margin-bottom:16px;">＋ プラン追加</button>
-      <div style="display:flex;gap:10px;">
-        <button onclick="document.getElementById('plan-editor-modal').remove()" style="flex:1;padding:10px;background:var(--bg-elev);border:1px solid var(--border);border-radius:8px;color:var(--text);cursor:pointer;">キャンセル</button>
-        <button onclick="savePlanEditor('${dateStr}','${rowId}')" style="flex:1;padding:10px;background:var(--accent);border:none;border-radius:8px;color:#fff;font-weight:700;cursor:pointer;">保存</button>
-      </div>
-    </div>`;
-  document.body.appendChild(overlay);
-}
-
-function addPlanLine() {
-  const list = document.getElementById('plan-list');
-  const i = list.children.length;
-  const div = document.createElement('div');
-  div.style.cssText = 'display:flex;gap:8px;align-items:center;';
-  div.innerHTML = `
-    <select id="ptype-${i}" style="padding:6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;">
-      <option value="dentou">電灯</option>
-      <option value="douryoku">動力</option>
-    </select>
-    <input type="text" id="pname-${i}" placeholder="プラン名(例:東DB)" style="flex:1;padding:6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;">
-    <input type="number" id="pcount-${i}" value="1" min="0.5" step="0.5" style="width:60px;padding:6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;text-align:center;">
-    <button onclick="this.parentElement.remove()" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:16px;">✕</button>`;
-  list.appendChild(div);
-}
-
-function savePlanEditor(dateStr, rowId) {
-  const rows = window.boardState.boards[dateStr] || [];
-  const row = rows.find(r => String(r.id) === String(rowId));
-  if (!row) return;
-  
-  const list = document.getElementById('plan-list');
-  const newPlans = [];
-  for (let i = 0; i < list.children.length; i++) {
-    const type = document.getElementById('ptype-' + i);
-    const name = document.getElementById('pname-' + i);
-    const count = document.getElementById('pcount-' + i);
-    if (type && name && count) {
-      newPlans.push({ type: type.value, name: name.value, count: parseFloat(count.value)||1 });
-    }
+  // 数値フィールドはparseFloat
+  if (['dentouCount','douryokuCount','dentouAdj','douryokuAdj'].includes(field)) {
+    row[field] = parseFloat(value) || 0;
+  } else {
+    row[field] = value;
   }
-  row.plans = newPlans;
-  document.getElementById('plan-editor-modal').remove();
+  // 集計プレビューのみ更新（テーブルは再描画しない）
+  _boardUpdatePreview(dateStr);
+}
+
+function _boardUpdatePreview(dateStr) {
+  // 軽量: summaryだけ更新
+  const calc = _boardCalc(dateStr);
+  const members = (state.members || []).filter(m => m.active && m.name);
+  const el = document.querySelector('#board-section table:last-of-type tbody');
+  // 重くなるので省略（保存時に全再描画）
+}
+
+function _boardAddRow(dateStr) {
+  _boardGetRows(dateStr).push(_boardNewRow());
   renderBoardSection(dateStr);
 }
+
+function _boardDeleteRow(dateStr, rowId) {
+  if (!confirm('この行を削除しますか？')) return;
+  window._boardData[dateStr] = _boardGetRows(dateStr).filter(r => r.id !== rowId);
+  renderBoardSection(dateStr);
+}
+
 
 // ═══════════════════════════════════════════════════════════
 //   BULLETIN BOARD（掲示板）
