@@ -15610,8 +15610,6 @@ function _boardNewRow() {
     kyakuban: 'none',  // none / machi / ok
     dentouCount: 0,
     douryokuCount: 0,
-    dentouAdj: 0,
-    douryokuAdj: 0,
     op: false,
   };
 }
@@ -15626,41 +15624,58 @@ function _boardCalc(dateStr) {
   const rows = _boardGetRows(dateStr);
   const result = {};
   (state.members || []).forEach(m => {
-    result[m.id] = { pass: 0, maekaku_ok: 0, seiyaku: 0, dentou: 0, douryoku: 0 };
+    // pass=パス数, maekaku_cls=前確CLS, maekaku_ok=前確OK, goukaku_ok=後確OK
+    // seiyaku=成約, dentou=電灯, douryoku=動力, op=OP
+    result[m.id] = { pass: 0, maekaku_cls: 0, maekaku_ok: 0, goukaku_ok: 0, seiyaku: 0, dentou: 0, douryoku: 0, op: 0 };
   });
   let teamOp = 0;
 
   rows.forEach(row => {
-    const isOk = row.result === 'ok' && row.kyakuban === 'ok';
+    // 前後確OKかどうか（追求はfalse）
+    const isFrontOk  = row.result === 'ok';
+    // 客番OK = 成約カウント対象（待ちはカウントしない）
+    const isKyakuOk  = row.kyakuban === 'ok';
+    // 成約 = 前後確OK かつ 客番OK
+    const isSeiyaku  = isFrontOk && isKyakuOk;
 
     // パス（()なしのみ）
     if (row.passId && !row.passSkip && result[row.passId] !== undefined) {
       result[row.passId].pass += 1;
     }
 
-    // クロ（前確OK）(()なしのみ)
+    // クロ（()なしのみ）→ 前確CLS は常にカウント
     if (row.kuroId && !row.kuroSkip && result[row.kuroId] !== undefined) {
-      result[row.kuroId].maekaku_ok += 1;
+      // 前確CLS（クロが（）なしの全案件）
+      result[row.kuroId].maekaku_cls += 1;
 
-      if (isOk) {
+      // 前確OK・後確OK = result === 'ok'のみ（追求はカウントしない）
+      if (isFrontOk) {
+        result[row.kuroId].maekaku_ok  += 1;
+        result[row.kuroId].goukaku_ok  += 1;  // 前後はセットなので同時カウント
+      }
+
+      // 成約・電灯・動力 = 客番OKのみ
+      if (isSeiyaku) {
+        // 按分: パスとクロが別人かつ両方（）なし
         const isBuntan = row.passId && !row.passSkip && row.passId !== row.kuroId && result[row.passId] !== undefined;
         const ratio = isBuntan ? 0.5 : 1;
-        const dentou = (parseFloat(row.dentouCount) || 0) + (parseFloat(row.dentouAdj) || 0);
-        const douryoku = (parseFloat(row.douryokuCount) || 0) + (parseFloat(row.douryokuAdj) || 0);
+        const dentou   = parseFloat(row.dentouCount)   || 0;
+        const douryoku = parseFloat(row.douryokuCount) || 0;
 
         result[row.kuroId].seiyaku  += ratio;
-        result[row.kuroId].dentou   += dentou * ratio;
+        result[row.kuroId].dentou   += dentou   * ratio;
         result[row.kuroId].douryoku += douryoku * ratio;
 
         if (isBuntan) {
           result[row.passId].seiyaku  += ratio;
-          result[row.passId].dentou   += dentou * ratio;
+          result[row.passId].dentou   += dentou   * ratio;
           result[row.passId].douryoku += douryoku * ratio;
         }
+
+        // OP = 客番OKのみカウント（按分なし、チーム合計）
+        if (row.op) teamOp += 1;
       }
     }
-
-    if (row.op) teamOp++;
   });
 
   return { members: result, teamOp };
@@ -15704,11 +15719,13 @@ async function _boardApplyToNippo(dateStr) {
     if (vals.pass + vals.maekaku_ok + vals.seiyaku === 0) continue;
     const repKey = memberId + '|' + dateStr;
     if (!state.dailyReports[repKey]) state.dailyReports[repKey] = {};
-    if (vals.pass > 0)       state.dailyReports[repKey].pass = vals.pass;
-    if (vals.maekaku_ok > 0) state.dailyReports[repKey].maekaku_ok = vals.maekaku_ok;
-    if (vals.seiyaku > 0)    state.dailyReports[repKey].seiyaku = vals.seiyaku;
-    if (vals.dentou > 0)     state.dailyReports[repKey].dentou_plan = vals.dentou;
-    if (vals.douryoku > 0)   state.dailyReports[repKey].douryoku = vals.douryoku;
+    if (vals.pass        > 0) state.dailyReports[repKey].pass          = vals.pass;
+    if (vals.maekaku_cls > 0) state.dailyReports[repKey].maekaku_close = vals.maekaku_cls;  // 前確CLS
+    if (vals.maekaku_ok  > 0) state.dailyReports[repKey].maekaku_ok    = vals.maekaku_ok;   // 前確OK
+    if (vals.goukaku_ok  > 0) state.dailyReports[repKey].goukaku_ok    = vals.goukaku_ok;   // 後確OK
+    if (vals.seiyaku     > 0) state.dailyReports[repKey].seiyaku       = vals.seiyaku;
+    if (vals.dentou      > 0) state.dailyReports[repKey].dentou_plan   = vals.dentou;
+    if (vals.douryoku    > 0) state.dailyReports[repKey].douryoku      = vals.douryoku;
     try { await _pushReport(memberId, dateStr); } catch(e) {}
   }
 
@@ -15736,7 +15753,7 @@ async function renderBoardSection(dateStr) {
   const summaryHtml = members
     .filter(m => {
       const v = calc.members[m.id];
-      return v && (v.pass + v.maekaku_ok + v.seiyaku) > 0;
+      return v && (v.pass + v.maekaku_cls + v.maekaku_ok + v.seiyaku) > 0;
     })
     .map(m => {
       const v = calc.members[m.id];
@@ -15744,7 +15761,9 @@ async function renderBoardSection(dateStr) {
       return `<tr>
         <td style="padding:6px 10px;">${n}</td>
         <td style="padding:6px 10px;text-align:center;">${v.pass||0}</td>
+        <td style="padding:6px 10px;text-align:center;">${v.maekaku_cls||0}</td>
         <td style="padding:6px 10px;text-align:center;">${v.maekaku_ok||0}</td>
+        <td style="padding:6px 10px;text-align:center;">${v.goukaku_ok||0}</td>
         <td style="padding:6px 10px;text-align:center;">${v.seiyaku > 0 ? v.seiyaku : ''}</td>
         <td style="padding:6px 10px;text-align:center;">${v.dentou > 0 ? v.dentou : ''}</td>
         <td style="padding:6px 10px;text-align:center;">${v.douryoku > 0 ? v.douryoku : ''}</td>
@@ -15774,8 +15793,6 @@ async function renderBoardSection(dateStr) {
               <th style="padding:8px 6px;text-align:left;white-space:nowrap;">客番回収</th>
               <th style="padding:8px 6px;text-align:center;white-space:nowrap;">電灯件数</th>
               <th style="padding:8px 6px;text-align:center;white-space:nowrap;">動力件数</th>
-              <th style="padding:8px 6px;text-align:center;white-space:nowrap;">電灯調整</th>
-              <th style="padding:8px 6px;text-align:center;white-space:nowrap;">動力調整</th>
               <th style="padding:8px 6px;text-align:center;white-space:nowrap;">OP</th>
               ${isAdmin ? '<th style="padding:8px 6px;"></th>' : ''}
             </tr>
@@ -15798,7 +15815,9 @@ async function renderBoardSection(dateStr) {
             <tr style="background:var(--bg-card);">
               <th style="padding:6px 10px;text-align:left;">名前</th>
               <th style="padding:6px 10px;text-align:center;">パス</th>
+              <th style="padding:6px 10px;text-align:center;">前確CLS</th>
               <th style="padding:6px 10px;text-align:center;">前確OK</th>
+              <th style="padding:6px 10px;text-align:center;">後確OK</th>
               <th style="padding:6px 10px;text-align:center;">成約</th>
               <th style="padding:6px 10px;text-align:center;">電灯</th>
               <th style="padding:6px 10px;text-align:center;">動力</th>
@@ -15850,8 +15869,6 @@ function _boardRowHtml(row, dateStr, members, isAdmin) {
       <td style="padding:8px 6px;color:${kyakuColor};font-weight:700;">${row.kyakuban==='ok'?'OK':row.kyakuban==='machi'?'待ち':'-'}</td>
       <td style="padding:8px 6px;text-align:center;">${row.dentouCount||0}</td>
       <td style="padding:8px 6px;text-align:center;">${row.douryokuCount||0}</td>
-      <td style="padding:8px 6px;text-align:center;">${row.dentouAdj||0}</td>
-      <td style="padding:8px 6px;text-align:center;">${row.douryokuAdj||0}</td>
       <td style="padding:8px 6px;text-align:center;">${row.op?'✅':'－'}</td>
     </tr>`;
   }
@@ -15901,8 +15918,6 @@ function _boardRowHtml(row, dateStr, members, isAdmin) {
     </td>
     <td style="padding:4px 6px;">${inp('number', row.dentouCount||0, '60px', 'dentouCount', 'min="0" step="0.5"')}</td>
     <td style="padding:4px 6px;">${inp('number', row.douryokuCount||0, '60px', 'douryokuCount', 'min="0" step="0.5"')}</td>
-    <td style="padding:4px 6px;">${inp('number', row.dentouAdj||0, '60px', 'dentouAdj', 'step="0.5"')}</td>
-    <td style="padding:4px 6px;">${inp('number', row.douryokuAdj||0, '60px', 'douryokuAdj', 'step="0.5"')}</td>
     <td style="padding:4px 6px;text-align:center;"><input type="checkbox" ${row.op?'checked':''} onchange="_boardUpdate('${dateStr}','${row.id}','op',this.checked)" style="transform:scale(1.3);cursor:pointer;"></td>
     <td style="padding:4px 6px;"><button onclick="_boardDeleteRow('${dateStr}','${row.id}')" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:16px;padding:4px 8px;">✕</button></td>
   </tr>`;
@@ -15913,7 +15928,7 @@ function _boardUpdate(dateStr, rowId, field, value) {
   const row = rows.find(r => r.id === rowId);
   if (!row) return;
   // 数値フィールドはparseFloat
-  if (['dentouCount','douryokuCount','dentouAdj','douryokuAdj'].includes(field)) {
+  if (['dentouCount','douryokuCount'].includes(field)) {
     row[field] = parseFloat(value) || 0;
   } else {
     row[field] = value;
