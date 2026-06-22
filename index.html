@@ -15846,11 +15846,11 @@ async function renderBoardSection(dateStr) {
       <!-- ボタン -->
       ${isAdmin ? `
       <div style="display:flex;gap:10px;">
-        <button onclick="_boardSave('" + "'" + dateStr + "'" + ")"
+        <button onclick="_boardSave(window._boardCurrentDate)"
           style="flex:1;max-width:200px;padding:10px;background:var(--bg-elev);border:1px solid var(--border);border-radius:8px;color:var(--text);font-weight:700;cursor:pointer;font-size:13px;">
           💾 板を保存
         </button>
-        <button onclick="_boardApplyToNippo('" + "'" + dateStr + "'" + ")"
+        <button onclick="_boardApplyToNippo(window._boardCurrentDate)"
           style="flex:1;max-width:200px;padding:10px;background:linear-gradient(135deg,#f59e0b,#d97706);border:none;border-radius:8px;color:#fff;font-weight:700;cursor:pointer;font-size:13px;">
           ⚡ 日報に反映
         </button>
