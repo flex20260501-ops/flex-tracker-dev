@@ -15677,12 +15677,9 @@ function _boardCalc(dateStr) {
         result[row.kuroId].douryoku += douryoku * ratio;
 
         if (isBuntan) {
-          console.log('[boardCalc] パス按分 row.passId:', row.passId, 'ratio:', ratio, 'dentou:', dentou);
           result[row.passId].seiyaku  += ratio;
           result[row.passId].dentou   += dentou   * ratio;
           result[row.passId].douryoku += douryoku * ratio;
-        } else {
-          console.log('[boardCalc] 按分なし kuroId:', row.kuroId, 'passId:', row.passId, 'passSkip:', row.passSkip, 'isBuntan:', isBuntan);
         }
 
         // OP = 客番OKのみカウント（按分なし、チーム合計）
