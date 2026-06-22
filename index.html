@@ -15722,16 +15722,17 @@ async function _boardApplyToNippo(dateStr) {
   if (!state.dailyReports) state.dailyReports = {};
 
   for (const [memberId, vals] of Object.entries(calc.members)) {
-    if (vals.pass + vals.maekaku_ok + vals.seiyaku === 0) continue;
+    // 全メンバー対象（0もリセット上書きするためcontinueしない）
     const repKey = memberId + '|' + dateStr;
     if (!state.dailyReports[repKey]) state.dailyReports[repKey] = {};
-    if (vals.pass        > 0) state.dailyReports[repKey].pass          = vals.pass;
-    if (vals.maekaku_cls > 0) state.dailyReports[repKey].maekaku_close = vals.maekaku_cls;  // 前確CLS
-    if (vals.maekaku_ok  > 0) state.dailyReports[repKey].maekaku_ok    = vals.maekaku_ok;   // 前確OK
-    if (vals.goukaku_ok  > 0) state.dailyReports[repKey].goukaku_ok    = vals.goukaku_ok;   // 後確OK
-    if (vals.seiyaku     > 0) state.dailyReports[repKey].seiyaku       = vals.seiyaku;
-    if (vals.dentou      > 0) state.dailyReports[repKey].dentou_plan   = vals.dentou;
-    if (vals.douryoku    > 0) state.dailyReports[repKey].douryoku      = vals.douryoku;
+    // 板の値で完全上書き（0の場合も上書きしてリセット）
+    state.dailyReports[repKey].pass          = vals.pass        || 0;
+    state.dailyReports[repKey].maekaku_close = vals.maekaku_cls || 0;
+    state.dailyReports[repKey].maekaku_ok    = vals.maekaku_ok  || 0;
+    state.dailyReports[repKey].goukaku_ok    = vals.goukaku_ok  || 0;
+    state.dailyReports[repKey].seiyaku       = vals.seiyaku     || 0;
+    state.dailyReports[repKey].dentou_plan   = vals.dentou      || 0;
+    state.dailyReports[repKey].douryoku      = vals.douryoku    || 0;
     try { await _pushReport(memberId, dateStr); } catch(e) {}
   }
 
@@ -15747,6 +15748,7 @@ async function renderBoardSection(dateStr) {
   const el = document.getElementById('board-section');
   if (!el) return;
 
+  window._boardCurrentDate = dateStr;  // グローバルで現在の日付を保持
   el.innerHTML = '<div style="padding:24px;color:var(--text-mute);">板を読込中...</div>';
   await _boardLoad(dateStr);
 
@@ -15785,10 +15787,10 @@ async function renderBoardSection(dateStr) {
           onchange="renderBoardSection(this.value)"
           style="padding:6px 10px;background:var(--bg-elev);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;font-family:'JetBrains Mono',monospace;cursor:pointer;">
         <div style="display:flex;gap:6px;">
-          <button onclick="(()=>{const d=new Date('${dateStr}');d.setDate(d.getDate()-1);renderBoardSection(d.toISOString().slice(0,10));})()" style="padding:6px 10px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--text);cursor:pointer;font-size:12px;">◀ 前日</button>
-          <button onclick="(()=>{const d=new Date('${dateStr}');d.setDate(d.getDate()+1);renderBoardSection(d.toISOString().slice(0,10));})()" style="padding:6px 10px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--text);cursor:pointer;font-size:12px;">翌日 ▶</button>
+          <button onclick="(()=>{const d=new Date(window._boardCurrentDate||'${dateStr}');d.setDate(d.getDate()-1);renderBoardSection(d.toISOString().slice(0,10));})()" style="padding:6px 10px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--text);cursor:pointer;font-size:12px;">◀ 前日</button>
+          <button onclick="(()=>{const d=new Date(window._boardCurrentDate||'${dateStr}');d.setDate(d.getDate()+1);renderBoardSection(d.toISOString().slice(0,10));})()" style="padding:6px 10px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--text);cursor:pointer;font-size:12px;">翌日 ▶</button>
         </div>
-        ${isAdmin ? '<button onclick="_boardAddRow(\'' + dateStr + '\')" style="margin-left:auto;background:#f59e0b;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-weight:700;cursor:pointer;font-size:13px;">＋ 行追加</button>' : ''}
+        ${isAdmin ? '<button onclick="_boardAddRow(window._boardCurrentDate)" style="margin-left:auto;background:#f59e0b;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-weight:700;cursor:pointer;font-size:13px;">＋ 行追加</button>' : ''}
       </div>
 
       <!-- 案件テーブル -->
