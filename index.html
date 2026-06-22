@@ -15782,10 +15782,16 @@ async function renderBoardSection(dateStr) {
 
   el.innerHTML = `
     <div style="margin-top:32px;border-top:2px solid var(--border);padding-top:24px;padding-bottom:32px;">
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
         <div style="width:4px;height:24px;background:#f59e0b;border-radius:2px;"></div>
         <h3 style="font-family:'Archivo',sans-serif;font-weight:800;font-size:16px;color:var(--text);margin:0;">📋 板管理</h3>
-        <span style="font-size:11px;color:var(--text-mute);font-family:'JetBrains Mono',monospace;">${dateStr}</span>
+        <input type="date" id="board-date-picker" value="${dateStr}"
+          onchange="renderBoardSection(this.value)"
+          style="padding:6px 10px;background:var(--bg-elev);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;font-family:'JetBrains Mono',monospace;cursor:pointer;">
+        <div style="display:flex;gap:6px;">
+          <button onclick="(()=>{const d=new Date('${dateStr}');d.setDate(d.getDate()-1);renderBoardSection(d.toISOString().slice(0,10));})()" style="padding:6px 10px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--text);cursor:pointer;font-size:12px;">◀ 前日</button>
+          <button onclick="(()=>{const d=new Date('${dateStr}');d.setDate(d.getDate()+1);renderBoardSection(d.toISOString().slice(0,10));})()" style="padding:6px 10px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--text);cursor:pointer;font-size:12px;">翌日 ▶</button>
+        </div>
         ${isAdmin ? `<button onclick="_boardAddRow('${dateStr}')" style="margin-left:auto;background:#f59e0b;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-weight:700;cursor:pointer;font-size:13px;">＋ 行追加</button>` : ''}
       </div>
 
