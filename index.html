@@ -15973,7 +15973,7 @@ async function _boardRenderOnly(dateStr) {
   if (!el) return;
   window._boardCurrentDate = dateStr;
   const rows = _boardGetRows(dateStr);
-  const isAdmin = currentRole === 'admin';
+  const isAdmin = currentRole === 'admin' || currentRole === 'jimu';
   const members = (state.members || []).filter(m => m.active && m.name);
   const calc = _boardCalc(dateStr);
 
