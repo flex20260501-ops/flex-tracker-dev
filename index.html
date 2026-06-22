@@ -15788,7 +15788,7 @@ async function renderBoardSection(dateStr) {
           <button onclick="(()=>{const d=new Date('${dateStr}');d.setDate(d.getDate()-1);renderBoardSection(d.toISOString().slice(0,10));})()" style="padding:6px 10px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--text);cursor:pointer;font-size:12px;">◀ 前日</button>
           <button onclick="(()=>{const d=new Date('${dateStr}');d.setDate(d.getDate()+1);renderBoardSection(d.toISOString().slice(0,10));})()" style="padding:6px 10px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--text);cursor:pointer;font-size:12px;">翌日 ▶</button>
         </div>
-        ${isAdmin ? `<button onclick="_boardAddRow('${dateStr}')" style="margin-left:auto;background:#f59e0b;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-weight:700;cursor:pointer;font-size:13px;">＋ 行追加</button>` : ''}
+        ${isAdmin ? '<button onclick="_boardAddRow(\'' + dateStr + '\')" style="margin-left:auto;background:#f59e0b;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-weight:700;cursor:pointer;font-size:13px;">＋ 行追加</button>' : ''}
       </div>
 
       <!-- 案件テーブル -->
@@ -15844,11 +15844,11 @@ async function renderBoardSection(dateStr) {
       <!-- ボタン -->
       ${isAdmin ? `
       <div style="display:flex;gap:10px;">
-        <button onclick="_boardSave('${dateStr}')"
+        <button onclick="_boardSave('" + "'" + dateStr + "'" + ")"
           style="flex:1;max-width:200px;padding:10px;background:var(--bg-elev);border:1px solid var(--border);border-radius:8px;color:var(--text);font-weight:700;cursor:pointer;font-size:13px;">
           💾 板を保存
         </button>
-        <button onclick="_boardApplyToNippo('${dateStr}')"
+        <button onclick="_boardApplyToNippo('" + "'" + dateStr + "'" + ")"
           style="flex:1;max-width:200px;padding:10px;background:linear-gradient(135deg,#f59e0b,#d97706);border:none;border-radius:8px;color:#fff;font-weight:700;cursor:pointer;font-size:13px;">
           ⚡ 日報に反映
         </button>
