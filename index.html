@@ -15634,40 +15634,38 @@ function _boardCalc(dateStr) {
   const rows = _boardGetRows(dateStr);
   const result = {};
   (state.members || []).forEach(m => {
-    // pass=パス数, maekaku_cls=前確CLS, maekaku_ok=前確OK, goukaku_ok=後確OK
-    // seiyaku=成約, dentou=電灯, douryoku=動力, op=OP
     result[m.id] = { pass: 0, maekaku_cls: 0, maekaku_ok: 0, goukaku_ok: 0, seiyaku: 0, dentou: 0, douryoku: 0, op: 0 };
   });
   let teamOp = 0;
 
   rows.forEach(row => {
-    // 前後確OKかどうか（追求はfalse）
-    const isFrontOk  = row.result === 'ok';
-    // 客番OK = 成約カウント対象（待ちはカウントしない）
-    const isKyakuOk  = row.kyakuban === 'ok';
-    // 成約 = 前後確OK かつ 客番OK
-    const isSeiyaku  = isFrontOk && isKyakuOk;
+    const isFrontOk = row.result === 'ok';
+    const isKyakuOk = row.kyakuban === 'ok';
+    // 成約 = 客番OK かつ 前後確がtsuiseki/対象外/NGでない（okまたはnone/-）
+    // 追求・NG・対象外は成約にならない
+    const isSeiyaku = isKyakuOk && (row.result === 'ok' || row.result === 'none');
 
-    // パス（()なしのみ）
-    if (row.passId && !row.passSkip && result[row.passId] !== undefined) {
+    // パス（()なしのみ、対象外以外）
+    if (row.passId && !row.passSkip && result[row.passId] !== undefined && row.result !== 'taishogai') {
       result[row.passId].pass += 1;
     }
 
-    // クロ（()なしのみ）→ 前確CLS は常にカウント
-    if (row.kuroId && !row.kuroSkip && result[row.kuroId] !== undefined) {
-      // 前確CLS（クロが（）なしの全案件）
+    // クロ（()なしのみ）→ CLS・OK
+    if (row.kuroId && !row.kuroSkip && result[row.kuroId] !== undefined && row.result !== 'taishogai') {
       result[row.kuroId].maekaku_cls += 1;
-
-      // 前確OK・後確OK = result === 'ok'のみ（追求はカウントしない）
       if (isFrontOk) {
-        result[row.kuroId].maekaku_ok  += 1;
-        result[row.kuroId].goukaku_ok  += 1;  // 前後はセットなので同時カウント
+        result[row.kuroId].maekaku_ok += 1;
+        result[row.kuroId].goukaku_ok += 1;
       }
+    }
 
-      // 成約・電灯・動力 = 客番OKのみ
-      if (isSeiyaku) {
-        // 按分: パスとクロが別人かつ両方（）なし
-        const isBuntan = row.passId && !row.passSkip && row.passId !== row.kuroId && result[row.passId] !== undefined;
+    // 成約・電灯・動力・OP（()付きでもOK、客番OKのみ）
+    if (isSeiyaku) {
+      // クロ担当に計上（()付きでも成約は計上）
+      if (row.kuroId && result[row.kuroId] !== undefined) {
+        // 按分: パスとクロが別人かつ両方()なし
+        const isBuntan = row.passId && !row.passSkip && !row.kuroSkip &&
+                         row.passId !== row.kuroId && result[row.passId] !== undefined;
         const ratio = isBuntan ? 0.5 : 1;
         const dentou   = parseFloat(row.dentouCount)   || 0;
         const douryoku = parseFloat(row.douryokuCount) || 0;
@@ -15681,10 +15679,8 @@ function _boardCalc(dateStr) {
           result[row.passId].dentou   += dentou   * ratio;
           result[row.passId].douryoku += douryoku * ratio;
         }
-
-        // OP = 客番OKのみカウント（按分なし、チーム合計）
-        if (row.op) teamOp += 1;
       }
+      if (row.op) teamOp += 1;
     }
   });
 
@@ -15867,8 +15863,10 @@ function _boardRowHtml(row, dateStr, members, isAdmin) {
     `<option value="${m.id}" ${m.id === (isAdmin ? '' : '') ? '' : ''}>${m.name.replace(/\u3000/g,' ')}</option>`
   ).join('');
 
-  const resultColor = row.result === 'ok' ? '#22c55e' : row.result === 'tsuiseki' ? '#f59e0b' : '#94a3b8';
+  const resultLabel = row.result==='ok'?'OK':row.result==='tsuiseki'?'追求':row.result==='ng'?'NG':row.result==='taishogai'?'対象外':'－';
+    const resultColor = row.result === 'ok' ? '#22c55e' : row.result === 'tsuiseki' ? '#f59e0b' : row.result === 'ng' ? '#ef4444' : row.result === 'taishogai' ? '#6b7280' : '#94a3b8';
   const kyakuColor  = row.kyakuban === 'ok' ? '#22c55e' : row.kyakuban === 'machi' ? '#f59e0b' : '#94a3b8';
+    const isLocked = row.result === 'tsuiseki' || row.result === 'ng' || row.result === 'taishogai';
 
   if (!isAdmin) {
     const passM = members.find(m => m.id === row.passId);
@@ -15881,7 +15879,7 @@ function _boardRowHtml(row, dateStr, members, isAdmin) {
       <td style="padding:8px 6px;">${passLabel}</td>
       <td style="padding:8px 6px;">${kuroLabel}</td>
       <td style="padding:8px 6px;">${row.company||''}</td>
-      <td style="padding:8px 6px;color:${resultColor};font-weight:700;">${row.result==='ok'?'OK':row.result==='tsuiseki'?'追求':'-'}</td>
+      <td style="padding:8px 6px;color:${resultColor};font-weight:700;">${resultLabel}</td>
       <td style="padding:8px 6px;color:${kyakuColor};font-weight:700;">${row.kyakuban==='ok'?'OK':row.kyakuban==='machi'?'待ち':'-'}</td>
       <td style="padding:8px 6px;text-align:center;">${row.dentouCount||0}</td>
       <td style="padding:8px 6px;text-align:center;">${row.douryokuCount||0}</td>
@@ -15922,19 +15920,21 @@ function _boardRowHtml(row, dateStr, members, isAdmin) {
       <select onchange="_boardUpdate('${dateStr}','${row.id}','result',this.value)" style="padding:5px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;">
         <option value="none" ${row.result==='none'?'selected':''}>－</option>
         <option value="tsuiseki" ${row.result==='tsuiseki'?'selected':''}>追求</option>
+        <option value="ng" ${row.result==='ng'?'selected':''}>NG</option>
+        <option value="taishogai" ${row.result==='taishogai'?'selected':''}>対象外</option>
         <option value="ok" ${row.result==='ok'?'selected':''}>OK</option>
       </select>
     </td>
     <td style="padding:4px 6px;">
-      <select onchange="_boardUpdate('${dateStr}','${row.id}','kyakuban',this.value)" style="padding:5px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;">
-        <option value="none" ${row.kyakuban==='none'?'selected':''}>－</option>
-        <option value="machi" ${row.kyakuban==='machi'?'selected':''}>待ち</option>
-        <option value="ok" ${row.kyakuban==='ok'?'selected':''}>OK</option>
+      <select onchange="_boardUpdate('${dateStr}','${row.id}','kyakuban',this.value)" ${isLocked?'disabled style="padding:5px;background:#374151;border:1px solid var(--border);border-radius:6px;color:#6b7280;font-size:12px;"':'style="padding:5px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;"'}>
+        <option value="none">－</option>
+        ${!isLocked ? '<option value="machi" ' + (row.kyakuban==='machi'?'selected':'') + '>待ち</option>' : ''}
+        ${!isLocked ? '<option value="ok" ' + (row.kyakuban==='ok'?'selected':'') + '>OK</option>' : ''}
       </select>
     </td>
-    <td style="padding:4px 6px;">${inp('number', row.dentouCount||0, '60px', 'dentouCount', 'min="0" step="0.5"')}</td>
-    <td style="padding:4px 6px;">${inp('number', row.douryokuCount||0, '60px', 'douryokuCount', 'min="0" step="0.5"')}</td>
-    <td style="padding:4px 6px;text-align:center;"><input type="checkbox" ${row.op?'checked':''} onchange="_boardUpdate('${dateStr}','${row.id}','op',this.checked)" style="transform:scale(1.3);cursor:pointer;"></td>
+    <td style="padding:4px 6px;">${isLocked ? '<span style="color:#6b7280;padding:0 8px;">－</span>' : inp('number', row.dentouCount||0, '60px', 'dentouCount', 'min="0" step="0.5"')}</td>
+    <td style="padding:4px 6px;">${isLocked ? '<span style="color:#6b7280;padding:0 8px;">－</span>' : inp('number', row.douryokuCount||0, '60px', 'douryokuCount', 'min="0" step="0.5"')}</td>
+    <td style="padding:4px 6px;text-align:center;">${isLocked ? '<span style="color:#6b7280;">－</span>' : '<input type="checkbox" ' + (row.op?'checked':'') + ' onchange="_boardUpdate(\'' + dateStr + '\',\'' + row.id + '\',\'op\',this.checked)" style="transform:scale(1.3);cursor:pointer;">'}</td>
     <td style="padding:4px 6px;"><button onclick="_boardDeleteRow('${dateStr}','${row.id}')" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:16px;padding:4px 8px;">✕</button></td>
   </tr>`;
 }
