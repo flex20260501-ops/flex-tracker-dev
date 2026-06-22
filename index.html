@@ -9360,9 +9360,19 @@ let state = {
 
 async function loadState() {
   const hardcodedFirebaseConfig = { ...state.firebaseConfig };
+  // ★ DEV環境: localStorageのfirebaseConfigが本番設定になっている場合は強制クリア
   try {
     const raw = localStorage.getItem("tracker-state");
-    if (raw) { Object.assign(state, JSON.parse(raw)); }
+    if (raw) {
+      const saved = JSON.parse(raw);
+      // localStorageのprojectIdがHTMLのprojectIdと違う場合はlocalStorageを無視
+      if (saved.firebaseConfig && saved.firebaseConfig.projectId !== hardcodedFirebaseConfig.projectId) {
+        console.warn('[DEV] localStorage の projectId が異なるため無視します:', saved.firebaseConfig.projectId, '→', hardcodedFirebaseConfig.projectId);
+        localStorage.removeItem("tracker-state");
+      } else {
+        Object.assign(state, saved);
+      }
+    }
   } catch(e) { console.warn("loadState error (using defaults):", e); }
   state.firebaseConfig = hardcodedFirebaseConfig; // 常にHTMLの設定を使用
   // v89: injectStaticEntries不要（_MGMT_MAP定数で直接参照）
