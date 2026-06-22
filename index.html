@@ -15965,13 +15965,58 @@ function _boardUpdatePreview(dateStr) {
 
 function _boardAddRow(dateStr) {
   _boardGetRows(dateStr).push(_boardNewRow());
-  renderBoardSection(dateStr);
+  _boardRenderOnly(dateStr);  // Firestoreから再読込せずに描画のみ
+}
+
+async function _boardRenderOnly(dateStr) {
+  const el = document.getElementById('board-section');
+  if (!el) return;
+  window._boardCurrentDate = dateStr;
+  const rows = _boardGetRows(dateStr);
+  const isAdmin = currentRole === 'admin';
+  const members = (state.members || []).filter(m => m.active && m.name);
+  const calc = _boardCalc(dateStr);
+
+  // プレビュー集計
+  const summaryHtml = members
+    .filter(m => {
+      const v = calc.members[m.id];
+      return v && (v.pass + v.maekaku_cls + v.maekaku_ok + v.seiyaku) > 0;
+    })
+    .map(m => {
+      const v = calc.members[m.id];
+      const n = m.name.replace(/　/g, ' ');
+      return `<tr>
+        <td style="padding:6px 10px;">${n}</td>
+        <td style="padding:6px 10px;text-align:center;">${v.pass||0}</td>
+        <td style="padding:6px 10px;text-align:center;">${v.maekaku_cls||0}</td>
+        <td style="padding:6px 10px;text-align:center;">${v.maekaku_ok||0}</td>
+        <td style="padding:6px 10px;text-align:center;">${v.goukaku_ok||0}</td>
+        <td style="padding:6px 10px;text-align:center;">${v.seiyaku > 0 ? v.seiyaku : ''}</td>
+        <td style="padding:6px 10px;text-align:center;">${v.dentou > 0 ? v.dentou : ''}</td>
+        <td style="padding:6px 10px;text-align:center;">${v.douryoku > 0 ? v.douryoku : ''}</td>
+      </tr>`;
+    }).join('');
+
+  // テーブル行のみ更新
+  const tbody = document.getElementById('board-tbody');
+  if (tbody) {
+    const memberOpts = members.map(m =>
+      `<option value="${m.id}">${m.name.replace(/　/g,' ')}</option>`
+    ).join('');
+    tbody.innerHTML = rows.length === 0
+      ? `<tr><td colspan="${isAdmin ? 13 : 12}" style="text-align:center;padding:24px;color:var(--text-mute);">案件なし ／ 右上の「＋行追加」で追加</td></tr>`
+      : rows.map(row => _boardRowHtml(row, dateStr, members, isAdmin)).join('');
+  } else {
+    // tbodyがない場合は全再描画（ただしFirestoreから再読込しない）
+    await renderBoardSection(dateStr);
+  }
 }
 
 function _boardDeleteRow(dateStr, rowId) {
   if (!confirm('この行を削除しますか？')) return;
   window._boardData[dateStr] = _boardGetRows(dateStr).filter(r => r.id !== rowId);
-  renderBoardSection(dateStr);
+  _boardRenderOnly(dateStr);
 }
 
 
